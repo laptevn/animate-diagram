@@ -34,6 +34,23 @@ def tokenize_path(path_data: str) -> List[str]:
     return TOKEN_RE.findall(path_data)
 
 
+def split_subpaths(path_data: str) -> List[str]:
+    tokens = tokenize_path(path_data)
+    if not tokens:
+        return []
+
+    subpaths: List[str] = []
+    current: List[str] = []
+    for token in tokens:
+        if token in {"M", "m"} and current:
+            subpaths.append(" ".join(current))
+            current = []
+        current.append(token)
+    if current:
+        subpaths.append(" ".join(current))
+    return subpaths
+
+
 def _distance(a: Tuple[float, float], b: Tuple[float, float]) -> float:
     return math.hypot(b[0] - a[0], b[1] - a[1])
 
@@ -167,17 +184,29 @@ def find_arrow_lines(root: ET.Element) -> List[ArrowLine]:
         if len(path_elements) < 2:
             continue
 
-        path_infos: List[Tuple[ET.Element, PathInfo]] = []
+        path_infos: List[Tuple[ET.Element, PathInfo, str]] = []
         for path in path_elements:
-            info = parse_path(path.get("d", ""))
-            if info:
-                path_infos.append((path, info))
+            path_data = path.get("d", "")
+            subpaths = split_subpaths(path_data)
+            best_info: Optional[PathInfo] = None
+            best_subpath = ""
+            for subpath in subpaths:
+                info = parse_path(subpath)
+                if info and (best_info is None or info.length > best_info.length):
+                    best_info = info
+                    best_subpath = subpath
+            if best_info:
+                path_infos.append((path, best_info, best_subpath))
 
         if len(path_infos) < 2:
             continue
 
-        line_path, line_info = max(path_infos, key=lambda item: item[1].length)
-        arrowhead_infos = [info for element, info in path_infos if element is not line_path]
+        line_path, line_info, line_subpath = max(
+            path_infos, key=lambda item: item[1].length
+        )
+        arrowhead_infos = [
+            info for element, info, _ in path_infos if element is not line_path
+        ]
         if not arrowhead_infos:
             continue
 
@@ -189,6 +218,8 @@ def find_arrow_lines(root: ET.Element) -> List[ArrowLine]:
         dist_end = _distance(line_info.end, tip)
         head_is_end = dist_end <= dist_start
         direction_sign = -1 if head_is_end else 1
+        if line_subpath:
+            line_path.set("d", line_subpath)
         arrow_lines.append(ArrowLine(element=line_path, direction_sign=direction_sign))
 
     return arrow_lines
