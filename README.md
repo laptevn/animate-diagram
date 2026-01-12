@@ -15,20 +15,27 @@ Before (source SVG):
 After (animated GIF):
 ![Animated diagram](docs/output.gif)
 
-## Build and Run
+## Download
+Install from PyPI:
+```bash
+pip install animate-diagram
+```
+
+## Build
 Requires Python 3.9+.
 
-1) Install dependencies:
+Install dependencies from source:
 ```bash
 pip install -e .
 ```
 
-2) Install Chromium for the default renderer:
+## Run
+Install Chromium for the default renderer:
 ```bash
 playwright install chromium
 ```
 
-3) Run the CLI:
+Run the CLI:
 ```bash
 python -m animate_diagram path/to/diagram.svg output.gif
 ```
