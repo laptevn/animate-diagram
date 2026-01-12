@@ -15,6 +15,7 @@ NS = {"svg": SVG_NS}
 ET.register_namespace("", SVG_NS)
 
 TOKEN_RE = re.compile(r"[A-Za-z]|-?\d*\.?\d+(?:[eE][-+]?\d+)?")
+NUMBER_RE = re.compile(r"-?\d*\.?\d+(?:[eE][-+]?\d+)?")
 
 
 @dataclass
@@ -240,6 +241,75 @@ def relocate_masks_to_defs(root: ET.Element) -> None:
         defs.append(mask)
 
 
+def parse_svg_dimensions(root: ET.Element) -> Tuple[int, int]:
+    def parse_number(value: Optional[str]) -> Optional[float]:
+        if not value:
+            return None
+        match = NUMBER_RE.search(value)
+        if not match:
+            return None
+        return float(match.group(0))
+
+    width = parse_number(root.get("width"))
+    height = parse_number(root.get("height"))
+
+    if (width is None or height is None) and root.get("viewBox"):
+        parts = [float(p) for p in root.get("viewBox", "").split() if p]
+        if len(parts) == 4:
+            width = width if width is not None else parts[2]
+            height = height if height is not None else parts[3]
+
+    if width is None or height is None:
+        raise RuntimeError("SVG width/height could not be determined.")
+
+    return int(round(width)), int(round(height))
+
+
+class ChromiumRenderer:
+    def __init__(self, width: int, height: int) -> None:
+        self.width = width
+        self.height = height
+        self._playwright = None
+        self._browser = None
+        self._page = None
+
+    def __enter__(self) -> "ChromiumRenderer":
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError as exc:
+            raise RuntimeError(
+                "Playwright is required for Chromium rendering. "
+                "Install it with: pip install playwright && playwright install chromium"
+            ) from exc
+
+        self._playwright = sync_playwright().start()
+        self._browser = self._playwright.chromium.launch()
+        self._page = self._browser.new_page(
+            viewport={"width": self.width, "height": self.height}
+        )
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if self._browser:
+            self._browser.close()
+        if self._playwright:
+            self._playwright.stop()
+
+    def render(self, svg_markup: str) -> bytes:
+        if not self._page:
+            raise RuntimeError("Chromium renderer is not initialized.")
+
+        html = (
+            "<!doctype html><html><head><meta charset=\"utf-8\">"
+            "<style>html,body{margin:0;padding:0;background:#fff;}"
+            "svg{display:block;}</style></head><body>"
+            f"{svg_markup}</body></html>"
+        )
+        self._page.set_content(html, wait_until="load")
+        self._page.wait_for_function("document.fonts.status === 'loaded'")
+        return self._page.screenshot(type="png")
+
+
 def apply_dash_style(
     element: ET.Element,
     dash_length: float,
@@ -261,24 +331,42 @@ def render_frames(
     step: float,
     duration_ms: int,
     output_path: str,
+    renderer: str,
 ) -> None:
     images: List[Image.Image] = []
     arrow_lines = list(arrow_lines)
+    if renderer == "chromium":
+        width, height = parse_svg_dimensions(root)
+        with ChromiumRenderer(width, height) as chromium_renderer:
+            for frame_index in range(frames):
+                offset = frame_index * step
+                for arrow in arrow_lines:
+                    apply_dash_style(
+                        arrow.element,
+                        dash_length,
+                        gap_length,
+                        arrow.direction_sign * offset,
+                    )
 
-    for frame_index in range(frames):
-        offset = frame_index * step
-        for arrow in arrow_lines:
-            apply_dash_style(
-                arrow.element,
-                dash_length,
-                gap_length,
-                arrow.direction_sign * offset,
-            )
+                svg_markup = ET.tostring(root, encoding="unicode")
+                png_bytes = chromium_renderer.render(svg_markup)
+                image = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+                images.append(image)
+    else:
+        for frame_index in range(frames):
+            offset = frame_index * step
+            for arrow in arrow_lines:
+                apply_dash_style(
+                    arrow.element,
+                    dash_length,
+                    gap_length,
+                    arrow.direction_sign * offset,
+                )
 
-        svg_bytes = ET.tostring(root, encoding="utf-8", xml_declaration=True)
-        png_bytes = cairosvg.svg2png(bytestring=svg_bytes)
-        image = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
-        images.append(image)
+            svg_bytes = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+            png_bytes = cairosvg.svg2png(bytestring=svg_bytes)
+            image = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+            images.append(image)
 
     if not images:
         raise RuntimeError("No frames rendered.")
@@ -315,6 +403,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=80,
         help="Frame duration in milliseconds.",
     )
+    parser.add_argument(
+        "--renderer",
+        choices=("chromium", "cairosvg"),
+        default="chromium",
+        help="Renderer to use for SVG frames.",
+    )
     return parser
 
 
@@ -335,16 +429,21 @@ def main() -> None:
         print("No arrow lines detected in the SVG.", file=sys.stderr)
         raise SystemExit(1)
 
-    render_frames(
-        root=root,
-        arrow_lines=arrow_lines,
-        frames=args.frames,
-        dash_length=args.dash_length,
-        gap_length=args.gap_length,
-        step=args.step,
-        duration_ms=args.duration,
-        output_path=args.output_gif,
-    )
+    try:
+        render_frames(
+            root=root,
+            arrow_lines=arrow_lines,
+            frames=args.frames,
+            dash_length=args.dash_length,
+            gap_length=args.gap_length,
+            step=args.step,
+            duration_ms=args.duration,
+            output_path=args.output_gif,
+            renderer=args.renderer,
+        )
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":

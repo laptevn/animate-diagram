@@ -18,12 +18,17 @@ After (animated GIF):
 ## Build and Run
 Requires Python 3.9+.
 
-Install dependencies:
+1) Install dependencies:
 ```bash
 pip install -e .
 ```
 
-Run the CLI:
+2) Install Chromium for the default renderer:
+```bash
+playwright install chromium
+```
+
+3) Run the CLI:
 ```bash
 python -m animate_diagram path/to/diagram.svg output.gif
 ```
@@ -36,6 +41,12 @@ animate-diagram path/to/diagram.svg output.gif
 Useful flags:
 ```bash
 animate-diagram input.svg output.gif --frames 12 --dash-length 6 --gap-length 6 --step 2 --duration 80
+```
+
+Renderer selection (default is Chromium for better font fidelity):
+```bash
+animate-diagram input.svg output.gif --renderer chromium
+animate-diagram input.svg output.gif --renderer cairosvg
 ```
 
 ## License
