@@ -1,0 +1,60 @@
+name: Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (e.g., 0.1.0)"
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set package version
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          
+          version = "${{ inputs.version }}".strip()
+          if not version:
+              raise SystemExit("Version input is required.")
+          
+          path = Path("pyproject.toml")
+          content = path.read_text(encoding="utf-8")
+          content = re.sub(
+              r'^version\\s*=\\s*\"[^\"]+\"',
+              f'version = \"{version}\"',
+              content,
+              count=1,
+              flags=re.MULTILINE,
+          )
+          path.write_text(content, encoding="utf-8")
+          PY
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip build
+
+      - name: Build distributions
+        run: |
+          python -m build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ inputs.version }}
+          path: dist/*
+
+      - name: Publish to PyPI
+        if: secrets.PYPI_API_TOKEN != ''
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
