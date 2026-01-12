@@ -30,7 +30,7 @@ pip install -e .
 ```
 
 ## Run
-Install Chromium for the default renderer:
+Install Chromium for the default renderer (optional if using `--renderer cairosvg`):
 ```bash
 playwright install chromium
 ```
